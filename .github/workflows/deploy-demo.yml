@@ -1,0 +1,83 @@
+# Builds a template's live demo and publishes it to GitHub Pages.
+# Called from each template repo's .github/workflows/demo.yml.
+name: Deploy demo
+
+on:
+  workflow_call:
+    inputs:
+      kind:
+        description: "static (publish files as they are) or node (npm ci + build first)"
+        type: string
+        default: static
+      node-version:
+        type: string
+        default: "20"
+      build:
+        type: string
+        default: npm run build
+      output:
+        description: Folder to publish
+        type: string
+        default: "."
+    secrets:
+      SITE_DEPLOY_HOOK:
+        description: Vercel deploy hook for munawarahmed.com (optional)
+        required: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    env:
+      # Frameworks that need a path prefix (Next basePath, Gatsby pathPrefix) read this.
+      BASE_PATH: /${{ github.event.repository.name }}
+      SITE_HOOK: ${{ secrets.SITE_DEPLOY_HOOK }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - if: inputs.kind == 'node'
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ inputs.node-version }}
+          cache: npm
+      - if: inputs.kind == 'node'
+        run: npm ci && ${{ inputs.build }}
+
+      - name: Stage site
+        run: |
+          mkdir -p _site
+          rsync -a --exclude '.git*' --exclude node_modules --exclude _site \
+            --exclude README.md --exclude screenshot.webp "${{ inputs.output }}/" _site/
+
+      # Demo-only changes. They are never committed, so people who download
+      # the template don't get them.
+      - name: Keep demos out of search results
+        run: |
+          find _site -name '*.html' -print0 | xargs -0 perl -0pi -e \
+            's#(<head\b[^>]*>)#$1\n<meta name="robots" content="noindex">#i unless /name="robots"/i'
+
+      - name: Require the credit link
+        run: |
+          if ! grep -rlq 'href="https://munawarahmed.com/' _site --include='*.html'; then
+            echo '::error::No credit link to https://munawarahmed.com/ in the demo. See templates/README.md in the .github repo.'
+            exit 1
+          fi
+
+      - name: Check internal links and assets
+        uses: lycheeverse/lychee-action@v2
+        with:
+          args: --offline --no-progress --root-dir "${{ github.workspace }}/_site" '_site/**/*.html'
+          fail: true
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+      - id: deployment
+        uses: actions/deploy-pages@v4
+
+      - name: Rebuild munawarahmed.com
+        if: env.SITE_HOOK != ''
+        run: curl -fsS -X POST "$SITE_HOOK" > /dev/null

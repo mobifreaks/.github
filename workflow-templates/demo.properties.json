@@ -1,0 +1,6 @@
+{
+  "name": "Mobifreaks demo",
+  "description": "Publish this template's live demo to GitHub Pages on every push.",
+  "iconName": "octicon-browser",
+  "categories": ["HTML"]
+}
